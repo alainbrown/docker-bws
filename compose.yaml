@@ -1,0 +1,9 @@
+services:
+  docker-bws:
+    command: tail -f /dev/null
+    image: ghcr.io/alainbrown/docker-bws:latest
+    restart: unless-stopped
+    environment:
+      - BWS_ACCESS_TOKEN
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
