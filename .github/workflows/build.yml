@@ -5,7 +5,7 @@ on:
     branches:
       - main
   schedule:
-    - cron: '0 * * * *' # Run hourly. Exits early if no changes.
+    - cron: '0 0 * * *' # Run daily.
   workflow_dispatch:
 
 env:
@@ -27,6 +27,8 @@ jobs:
         run: |
           OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "owner_lc=$OWNER_LC" >> $GITHUB_OUTPUT
+          DATE_TAG=$(date +'%Y-%m-%d')
+          echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
 
       - name: Log in to the Container registry
         uses: docker/login-action@v3
@@ -35,51 +37,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check for upstream changes
-        id: check
-        run: |
-          # 1. Fetch docker:latest digest from Docker Hub
-          docker pull -q docker:latest
-          LATEST_DOCKER_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' docker:latest | cut -d'@' -f2 || echo "unknown")
-          echo "Latest docker digest: $LATEST_DOCKER_DIGEST"
-          echo "docker_digest=$LATEST_DOCKER_DIGEST" >> $GITHUB_OUTPUT
-
-          # 2. Fetch the latest bws version from crates.io
-          LATEST_BWS=$(curl -s "https://crates.io/api/v1/crates/bws" | jq -r '.crate.max_version')
-          echo "Latest bws version: $LATEST_BWS"
-          echo "bws_version=$LATEST_BWS" >> $GITHUB_OUTPUT
-
-          # 3. Fetch our published runtime image
-          RUNTIME_IMAGE="${{ env.REGISTRY }}/${{ steps.prep.outputs.owner_lc }}/docker-bws:latest"
-          docker pull -q "$RUNTIME_IMAGE" || echo "Runtime image not found locally or remotely."
-          CURRENT_BWS=$(docker inspect "$RUNTIME_IMAGE" | jq -r '.[0].Config.Labels["bws.version"] // "none"' || echo "none")
-          CURRENT_DOCKER_DIGEST=$(docker inspect "$RUNTIME_IMAGE" | jq -r '.[0].Config.Labels["docker.digest"] // "none"' || echo "none")
-
-          echo "Current published runtime -> bws: $CURRENT_BWS | docker digest: $CURRENT_DOCKER_DIGEST"
-
-          # 4. Compare
-          if [ "$LATEST_BWS" == "$CURRENT_BWS" ] && [ "$LATEST_DOCKER_DIGEST" == "$CURRENT_DOCKER_DIGEST" ] && [ "$LATEST_BWS" != "null" ] && [ "$LATEST_BWS" != "" ]; then
-            echo "No upstream changes detected. Skipping build."
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "Upstream changes detected! Proceeding with build."
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-
       - name: Set up Docker Buildx
-        if: steps.check.outputs.changed == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push Runtime image
-        if: steps.check.outputs.changed == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ steps.prep.outputs.owner_lc }}/docker-bws:latest
-          labels: |
-            bws.version=${{ steps.check.outputs.bws_version }}
-            docker.digest=${{ steps.check.outputs.docker_digest }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.prep.outputs.owner_lc }}/docker-bws:latest
+            ${{ env.REGISTRY }}/${{ steps.prep.outputs.owner_lc }}/docker-bws:${{ steps.prep.outputs.date_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
